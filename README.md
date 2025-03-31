@@ -8,10 +8,6 @@ El repositorio está organizado por años, y dentro de cada año se encuentran l
 
 ```
 tech-talks/
-├── 2023/
-│   ├── charla-1/
-│   ├── charla-2/
-│   └── ...
 ├── 2024/
 │   ├── charla-1/
 │   ├── charla-2/
