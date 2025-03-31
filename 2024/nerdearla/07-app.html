@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Silueta Artística</title>
+    <!-- Cargar bibliotecas MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        .container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+
+        .camera-view, .effect-view {
+            flex: 1;
+            position: relative;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .camera-view {
+            background: #111;
+            border-right: 2px solid #333;
+        }
+
+        video {
+            width: 100%;
+            height: auto;
+            transform: scaleX(-1);
+        }
+
+        canvas {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        #mainCanvas, #debugCanvas {
+            background: rgba(0, 0, 0, 0.8);
+        }
+
+        .controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            color: white;
+            font-family: Arial, sans-serif;
+            z-index: 1000;
+        }
+
+        .status {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            color: white;
+            font-family: Arial, sans-serif;
+            z-index: 1000;
+        }
+
+        button, select {
+            background: #444;
+            border: none;
+            color: white;
+            padding: 8px 15px;
+            margin: 5px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="camera-view">
+            <video id="video"></video>
+            <canvas id="debugCanvas"></canvas>
+        </div>
+        <div class="effect-view">
+            <canvas id="mainCanvas"></canvas>
+        </div>
+    </div>
+
+    <div class="status" id="status">
+        Estado: Inicializando...
+    </div>
+
+    <div class="controls">
+        <select id="effectType">
+            <option value="oilPaint">Óleo</option>
+            <option value="particles">Partículas</option>
+            <option value="mixed">Mixto</option>
+        </select>
+        <button id="colorBtn">Cambiar Color</button>
+        <button id="resetBtn">Reiniciar</button>
+        <button id="toggleDebug">Mostrar/Ocultar Puntos</button>
+    </div>
+
+    <script>
+        class ParticleSystem {
+            constructor(canvas, ctx) {
+                this.canvas = canvas;
+                this.ctx = ctx;
+                this.particles = [];
+                this.colors = [
+                    '#FF3F8E', '#04C2C9', '#2E55C1',
+                    '#FF9D00', '#FF7E79', '#E85617'
+                ];
+            }
+
+            addParticle(x, y, color) {
+                this.particles.push({
+                    x,
+                    y,
+                    color: color || this.colors[Math.floor(Math.random() * this.colors.length)],
+                    size: Math.random() * 5 + 2,
+                    speedX: (Math.random() - 0.5) * 3,
+                    speedY: (Math.random() - 0.5) * 3,
+                    life: 1
+                });
+            }
+
+            update() {
+                for (let i = this.particles.length - 1; i >= 0; i--) {
+                    const p = this.particles[i];
+                    p.x += p.speedX;
+                    p.y += p.speedY;
+                    p.life -= 0.01;
+
+                    if (p.life <= 0) {
+                        this.particles.splice(i, 1);
+                    }
+                }
+            }
+
+            draw() {
+                this.particles.forEach(p => {
+                    this.ctx.save();
+                    this.ctx.globalAlpha = p.life;
+                    this.ctx.fillStyle = p.color;
+                    this.ctx.beginPath();
+                    this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    this.ctx.restore();
+                });
+            }
+        }
+
+        class SilhouetteEffect {
+            constructor() {
+                this.video = document.getElementById('video');
+                this.mainCanvas = document.getElementById('mainCanvas');
+                this.debugCanvas = document.getElementById('debugCanvas');
+                this.mainCtx = this.mainCanvas.getContext('2d');
+                this.debugCtx = this.debugCanvas.getContext('2d');
+                
+                this.setupCanvases();
+                this.showDebug = true;
+                
+                this.particles = new ParticleSystem(this.mainCanvas, this.mainCtx);
+                this.effectType = 'oilPaint';
+                this.baseColor = '#FF3F8E';
+                
+                this.setupPose();
+                this.setupCamera();
+                this.setupEvents();
+                
+                this.previousPositions = [];
+                this.brushSize = 20;
+                this.isActive = false;
+                
+                this.updateStatus('Esperando cámara...');
+            }
+
+            setupCanvases() {
+                const aspectRatio = 16/9;
+                const containerWidth = window.innerWidth / 2;
+                const containerHeight = window.innerHeight;
+                
+                let width, height;
+                if (containerHeight * aspectRatio > containerWidth) {
+                    width = containerWidth;
+                    height = containerWidth / aspectRatio;
+                } else {
+                    height = containerHeight;
+                    width = containerHeight * aspectRatio;
+                }
+                
+                this.mainCanvas.width = width;
+                this.mainCanvas.height = height;
+                this.debugCanvas.width = width;
+                this.debugCanvas.height = height;
+            }
+
+            updateStatus(message) {
+                document.getElementById('status').textContent = 'Estado: ' + message;
+            }
+
+            setupPose() {
+                this.pose = new Pose({
+                    locateFile: (file) => {
+                        return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+                    }
+                });
+
+                this.pose.setOptions({
+                    modelComplexity: 0,
+                    smoothLandmarks: true,
+                    enableSegmentation: true,
+                    smoothSegmentation: true,
+                    minDetectionConfidence: 0.3,
+                    minTrackingConfidence: 0.3
+                });
+
+                this.pose.onResults((results) => {
+                    if (!this.isActive) return;
+                    
+                    this.mainCtx.clearRect(0, 0, this.mainCanvas.width, this.mainCanvas.height);
+                    this.debugCtx.clearRect(0, 0, this.debugCanvas.width, this.debugCanvas.height);
+                    
+                    if (results.poseLandmarks) {
+                        this.updateStatus('Pose detectada');
+                        console.log('Landmarks detectados:', results.poseLandmarks);
+                        
+                        if (this.showDebug) {
+                            this.drawDebugLandmarks(results);
+                        }
+                        
+                        this.drawSilhouette(results.poseLandmarks);
+                    } else {
+                        this.updateStatus('No se detecta pose');
+                    }
+                });
+            }
+
+            drawDebugLandmarks(results) {
+                this.debugCtx.save();
+                this.debugCtx.clearRect(0, 0, this.debugCanvas.width, this.debugCanvas.height);
+
+                this.debugCtx.globalAlpha = 0.3;
+                this.debugCtx.drawImage(results.image, 0, 0, this.debugCanvas.width, this.debugCanvas.height);
+                this.debugCtx.globalAlpha = 1;
+
+                drawConnectors(this.debugCtx, results.poseLandmarks, POSE_CONNECTIONS,
+                    {color: '#00FF00', lineWidth: 2});
+
+                drawLandmarks(this.debugCtx, results.poseLandmarks,
+                    {color: '#FF0000', lineWidth: 1, radius: 3});
+                
+                this.debugCtx.restore();
+            }
+
+            setupCamera() {
+                const camera = new Camera(this.video, {
+                    onFrame: async () => {
+                        await this.pose.send({image: this.video});
+                    },
+                    width: 640,
+                    height: 480
+                });
+                
+                camera.start()
+                    .then(() => {
+                        console.log('Cámara iniciada');
+                        this.updateStatus('Cámara iniciada');
+                        this.isActive = true;
+                    })
+                    .catch(error => {
+                        console.error('Error de cámara:', error);
+                        this.updateStatus('Error al iniciar la cámara: ' + error.message);
+                    });
+            }
+
+            setupEvents() {
+                document.getElementById('effectType').addEventListener('change', (e) => {
+                    this.effectType = e.target.value;
+                });
+
+                document.getElementById('colorBtn').addEventListener('click', () => {
+                    this.baseColor = '#' + Math.floor(Math.random()*16777215).toString(16);
+                });
+
+                document.getElementById('resetBtn').addEventListener('click', () => {
+                    this.mainCtx.clearRect(0, 0, this.mainCanvas.width, this.mainCanvas.height);
+                });
+
+                document.getElementById('toggleDebug').addEventListener('click', () => {
+                    this.showDebug = !this.showDebug;
+                    this.debugCanvas.style.display = this.showDebug ? 'block' : 'none';
+                });
+
+                window.addEventListener('resize', () => {
+                    this.setupCanvases();
+                });
+            }
+
+            drawSilhouette(landmarks) {
+                this.mainCtx.strokeStyle = this.baseColor;
+                this.mainCtx.lineWidth = this.brushSize;
+                this.mainCtx.lineJoin = 'round';
+                this.mainCtx.lineCap = 'round';
+
+                if (this.effectType === 'oilPaint' || this.effectType === 'mixed') {
+                    this.mainCtx.globalAlpha = 0.1;
+                    for (let i = 0; i < 3; i++) {
+                        this.mainCtx.beginPath();
+                        landmarks.forEach((landmark, index) => {
+                            const x = landmark.x * this.mainCanvas.width;
+                            const y = landmark.y * this.mainCanvas.height;
+                            
+                            if (index === 0) {
+                                this.mainCtx.moveTo(x, y);
+                            } else {
+                                this.mainCtx.lineTo(x, y);
+                            }
+                        });
+                        this.mainCtx.stroke();
+                    }
+                }
+
+                if (this.effectType === 'particles' || this.effectType === 'mixed') {
+                    landmarks.forEach(landmark => {
+                        const x = landmark.x * this.mainCanvas.width;
+                        const y = landmark.y * this.mainCanvas.height;
+                        
+                        if (Math.random() > 0.7) {
+                            for (let i = 0; i < 3; i++) {
+                                this.particles.addParticle(x, y, this.baseColor);
+                            }
+                        }
+                    });
+
+                    this.particles.update();
+                    this.particles.draw();
+                }
+            }
+        }
+
+        function checkAndLoadDependencies() {
+            if (
+                typeof Pose === 'undefined' ||
+                typeof Camera === 'undefined' ||
+                typeof drawConnectors === 'undefined' ||
+                typeof POSE_CONNECTIONS === 'undefined'
+            ) {
+                console.log('Esperando dependencias...');
+                setTimeout(checkAndLoadDependencies, 100);
+                return;
+            }
+            
+            console.log('Iniciando aplicación...');
+            new SilhouetteEffect();
+        }
+
+        window.addEventListener('load', checkAndLoadDependencies);
+    </script>
+</body>
+</html>

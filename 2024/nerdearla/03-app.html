@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a;
+            color: white;
+            font-family: system-ui, -apple-system, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            max-width: 800px;
+            width: 100%;
+        }
+        canvas {
+            background: #000;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .controls {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .control-group {
+            margin: 15px 0;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        select {
+            padding: 8px;
+            border-radius: 4px;
+            background: #333;
+            color: white;
+            border: 1px solid #555;
+        }
+        .slider-container {
+            margin: 10px 0;
+        }
+        input[type="range"] {
+            width: 200px;
+        }
+        .visualization {
+            position: relative;
+            width: 100%;
+            height: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Generador Musical Creativo</h1>
+        
+        <div class="controls">
+            <div class="control-group">
+                <button id="playBtn">Iniciar/Detener</button>
+                <button id="generateBtn">Nueva Melodía</button>
+            </div>
+            
+            <div class="control-group">
+                <label>Escala Musical:</label>
+                <select id="scaleSelect">
+                    <option value="major">Mayor</option>
+                    <option value="minor">Menor</option>
+                    <option value="pentatonic">Pentatónica</option>
+                    <option value="blues">Blues</option>
+                    <option value="dorian">Dórica</option>
+                </select>
+                
+                <label>Tónica:</label>
+                <select id="rootNote">
+                    <option value="C">C</option>
+                    <option value="D">D</option>
+                    <option value="E">E</option>
+                    <option value="F">F</option>
+                    <option value="G">G</option>
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                </select>
+            </div>
+            
+            <div class="slider-container">
+                <label>Tempo: </label>
+                <input type="range" id="tempoSlider" min="60" max="180" value="120">
+                <span id="tempoValue">120 BPM</span>
+            </div>
+            
+            <div class="slider-container">
+                <label>Reverb: </label>
+                <input type="range" id="reverbSlider" min="0" max="1" step="0.1" value="0.3">
+            </div>
+        </div>
+        
+        <div class="visualization">
+            <canvas id="visualizer"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // Configuración musical
+        const scales = {
+            major: [0, 2, 4, 5, 7, 9, 11],
+            minor: [0, 2, 3, 5, 7, 8, 10],
+            pentatonic: [0, 2, 4, 7, 9],
+            blues: [0, 3, 5, 6, 7, 10],
+            dorian: [0, 2, 3, 5, 7, 9, 10]
+        };
+
+        const progressions = {
+            major: ['I', 'IV', 'V', 'I'],
+            minor: ['i', 'iv', 'v', 'i'],
+            basic: ['I', 'vi', 'IV', 'V']
+        };
+
+        // Configuración del sintetizador
+        const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+        const reverb = new Tone.Reverb({
+            decay: 4,
+            wet: 0.3
+        }).toDestination();
+        synth.connect(reverb);
+
+        // Variables globales
+        let isPlaying = false;
+        let currentScale = scales.major;
+        let currentRoot = 'C4';
+        let currentNotes = [];
+        let currentChord = [];
+        let currentProgression;
+        let progressionIndex = 0;
+
+        // Configuración del visualizador
+        const canvas = document.getElementById('visualizer');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 800;
+        canvas.height = 300;
+
+        // Función para generar notas en la escala
+        function generateNotesFromScale(root, scale) {
+            const rootNum = Tone.Frequency(root).toMidi();
+            return scale.map(interval => Tone.Frequency(rootNum + interval, 'midi').toNote());
+        }
+
+        // Función para generar melodía
+        function generateMelody() {
+            const numNotes = 8;
+            const melody = [];
+            const rootNum = Tone.Frequency(currentRoot).toMidi();
+            
+            for (let i = 0; i < numNotes; i++) {
+                const scalePos = Math.floor(Math.random() * currentScale.length);
+                const octave = Math.floor(Math.random() * 2);
+                const note = rootNum + currentScale[scalePos] + (octave * 12);
+                melody.push(Tone.Frequency(note, 'midi').toNote());
+            }
+            
+            return melody;
+        }
+
+        // Función para generar acorde
+        function generateChord(root, type = 'major') {
+            const rootNum = Tone.Frequency(root).toMidi();
+            const intervals = type === 'major' ? [0, 4, 7] : [0, 3, 7];
+            return intervals.map(interval => Tone.Frequency(rootNum + interval, 'midi').toNote());
+        }
+
+        // Función para dibujar visualización
+        function drawVisualization(notes, chords) {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Dibujar melodía
+            notes.forEach((note, i) => {
+                const x = (canvas.width / notes.length) * i;
+                const height = (Tone.Frequency(note).toMidi() - 60) * 5;
+                
+                ctx.fillStyle = `hsl(${height}, 70%, 50%)`;
+                ctx.fillRect(x, canvas.height - height, 
+                           canvas.width / notes.length - 2, height);
+            });
+
+            // Dibujar acorde actual
+            chords.forEach((note, i) => {
+                const x = (canvas.width / 4) * progressionIndex;
+                const y = Tone.Frequency(note).toMidi() * 2;
+                
+                ctx.beginPath();
+                ctx.arc(x + 50, y, 10, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255, 255, 255, 0.5)`;
+                ctx.fill();
+            });
+        }
+
+        // Función principal de reproducción
+        function playSequence() {
+            const tempo = document.getElementById('tempoSlider').value;
+            Tone.Transport.bpm.value = tempo;
+
+            const sequence = new Tone.Sequence((time, note) => {
+                synth.triggerAttackRelease(note, '8n', time);
+                
+                // Actualizar visualización
+                requestAnimationFrame(() => {
+                    drawVisualization(currentNotes, currentChord);
+                });
+            }, currentNotes, '4n');
+
+            const chordSequence = new Tone.Sequence((time, chord) => {
+                currentChord = chord;
+                synth.triggerAttackRelease(chord, '2n', time, 0.5);
+                progressionIndex = (progressionIndex + 1) % 4;
+            }, [currentProgression], '1n');
+
+            sequence.start();
+            chordSequence.start();
+            Tone.Transport.start();
+        }
+
+        // Event Listeners
+        document.getElementById('playBtn').addEventListener('click', async () => {
+            await Tone.start();
+            if (!isPlaying) {
+                isPlaying = true;
+                playSequence();
+            } else {
+                isPlaying = false;
+                Tone.Transport.stop();
+                Tone.Transport.cancel();
+            }
+        });
+
+        document.getElementById('generateBtn').addEventListener('click', () => {
+            const scaleType = document.getElementById('scaleSelect').value;
+            const root = document.getElementById('rootNote').value + '4';
+            
+            currentScale = scales[scaleType];
+            currentRoot = root;
+            currentNotes = generateMelody();
+            currentProgression = generateChord(root, scaleType === 'minor' ? 'minor' : 'major');
+            
+            if (isPlaying) {
+                Tone.Transport.stop();
+                Tone.Transport.cancel();
+                playSequence();
+            }
+        });
+
+        document.getElementById('tempoSlider').addEventListener('input', (e) => {
+            document.getElementById('tempoValue').textContent = `${e.target.value} BPM`;
+            Tone.Transport.bpm.value = e.target.value;
+        });
+
+        document.getElementById('reverbSlider').addEventListener('input', (e) => {
+            reverb.wet.value = e.target.value;
+        });
+
+        // Inicialización
+        currentNotes = generateMelody();
+        currentProgression = generateChord(currentRoot);
+        drawVisualization(currentNotes, currentProgression);
+    </script>
+</body>
+</html>

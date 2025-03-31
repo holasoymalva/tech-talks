@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #121212;
+            color: white;
+            font-family: system-ui, -apple-system, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            max-width: 1200px;
+            width: 100%;
+        }
+        .title {
+            text-align: center;
+            color: #1DB954;
+            margin-bottom: 30px;
+        }
+        .interface {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .video-container {
+            position: relative;
+            background: #282828;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .canvas-container {
+            position: relative;
+            background: #282828;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        video, canvas {
+            width: 100%;
+            height: auto;
+            transform: scaleX(-1);
+        }
+        .controls {
+            background: #282828;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 20px 0;
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+        .control-section {
+            background: #181818;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .section-title {
+            color: #1DB954;
+            margin-bottom: 10px;
+        }
+        button {
+            background: #1DB954;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 20px;
+            cursor: pointer;
+            margin: 5px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        button:hover {
+            background: #1ed760;
+            transform: translateY(-2px);
+        }
+        select {
+            width: 100%;
+            padding: 8px;
+            background: #333;
+            color: white;
+            border: 1px solid #444;
+            border-radius: 4px;
+            margin: 5px 0;
+        }
+        .slider-container {
+            margin: 10px 0;
+        }
+        input[type="range"] {
+            width: 100%;
+            height: 5px;
+            -webkit-appearance: none;
+            background: #535353;
+            border-radius: 5px;
+            outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 15px;
+            height: 15px;
+            background: #1DB954;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        .status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="title">Música por Gestos</h1>
+        
+        <div class="interface">
+            <div class="video-container">
+                <video id="video"></video>
+                <div class="status" id="handStatus">Buscando manos...</div>
+            </div>
+            
+            <div class="canvas-container">
+                <canvas id="visualizer"></canvas>
+            </div>
+            
+            <div class="controls">
+                <div class="control-section">
+                    <h3 class="section-title">Control Principal</h3>
+                    <button id="startBtn">Iniciar Audio</button>
+                    <button id="calibrateBtn">Calibrar</button>
+                    
+                    <div class="slider-container">
+                        <label>Sensibilidad:</label>
+                        <input type="range" id="sensitivitySlider" min="1" max="10" value="5">
+                    </div>
+                </div>
+                
+                <div class="control-section">
+                    <h3 class="section-title">Sonido</h3>
+                    <select id="soundType">
+                        <option value="synth">Sintetizador</option>
+                        <option value="ambient">Ambiental</option>
+                        <option value="drums">Percusión</option>
+                    </select>
+                    
+                    <div class="slider-container">
+                        <label>Reverb:</label>
+                        <input type="range" id="reverbSlider" min="0" max="1" step="0.1" value="0.3">
+                    </div>
+                </div>
+                
+                <div class="control-section">
+                    <h3 class="section-title">Escala Musical</h3>
+                    <select id="scaleType">
+                        <option value="major">Mayor</option>
+                        <option value="minor">Menor</option>
+                        <option value="pentatonic">Pentatónica</option>
+                        <option value="blues">Blues</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuración de MediaPipe Hands
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+        
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        // Configuración de audio
+        const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+        const reverb = new Tone.Reverb({
+            decay: 4,
+            wet: 0.3
+        }).toDestination();
+        
+        synth.connect(reverb);
+
+        // Escalas musicales
+        const scales = {
+            major: ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5'],
+            minor: ['C4', 'D4', 'Eb4', 'F4', 'G4', 'Ab4', 'Bb4', 'C5'],
+            pentatonic: ['C4', 'D4', 'E4', 'G4', 'A4', 'C5'],
+            blues: ['C4', 'Eb4', 'F4', 'F#4', 'G4', 'Bb4', 'C5']
+        };
+
+        // Variables globales
+        let currentScale = scales.major;
+        let isAudioStarted = false;
+        let lastNoteTime = 0;
+        let handPositions = [];
+
+        // Configuración de video
+        const video = document.getElementById('video');
+        const visualizer = document.getElementById('visualizer');
+        const ctx = visualizer.getContext('2d');
+        const camera = new Camera(video, {
+            onFrame: async () => {
+                await hands.send({image: video});
+            },
+            width: 640,
+            height: 480
+        });
+
+        // Configuración del visualizador
+        visualizer.width = 640;
+        visualizer.height = 480;
+
+        // Función para mapear posición Y a nota
+        function mapToNote(y) {
+            const index = Math.floor(map(y, 0, 1, 0, currentScale.length));
+            return currentScale[Math.min(index, currentScale.length - 1)];
+        }
+
+        // Función de mapeo de valores
+        function map(value, start1, stop1, start2, stop2) {
+            return ((value - start1) / (stop1 - start1)) * (stop2 - start2) + start2;
+        }
+
+        // Función para dibujar visualización
+        function drawVisualization(results) {
+            ctx.clearRect(0, 0, visualizer.width, visualizer.height);
+            
+            if (results.multiHandLandmarks) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    // Dibujar conexiones de los dedos
+                    drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
+                        color: '#1DB954',
+                        lineWidth: 2
+                    });
+                    
+                    // Dibujar puntos de landmarks
+                    drawLandmarks(ctx, landmarks, {
+                        color: '#ffffff',
+                        lineWidth: 1
+                    });
+                    
+                    // Dibujar trayectoria del movimiento
+                    if (handPositions.length > 0) {
+                        ctx.beginPath();
+                        ctx.moveTo(
+                            handPositions[0].x * visualizer.width,
+                            handPositions[0].y * visualizer.height
+                        );
+                        
+                        for (let i = 1; i < handPositions.length; i++) {
+                            ctx.lineTo(
+                                handPositions[i].x * visualizer.width,
+                                handPositions[i].y * visualizer.height
+                            );
+                        }
+                        
+                        ctx.strokeStyle = 'rgba(29, 185, 84, 0.5)';
+                        ctx.lineWidth = 3;
+                        ctx.stroke();
+                    }
+                }
+            }
+            
+            // Dibujar escala musical
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+            for (let i = 0; i < currentScale.length; i++) {
+                const y = (i / currentScale.length) * visualizer.height;
+                ctx.fillRect(0, y, visualizer.width, 2);
+                ctx.fillText(currentScale[i], 10, y + 15);
+            }
+        }
+
+        // Procesamiento de landmarks de manos
+        hands.onResults(results => {
+            document.getElementById('handStatus').textContent = 
+                results.multiHandLandmarks.length > 0 ? 'Manos detectadas' : 'Buscando manos...';
+            
+            if (results.multiHandLandmarks && isAudioStarted) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    // Usar la punta del dedo índice como control
+                    const indexTip = landmarks[8];
+                    
+                    // Actualizar posiciones para la trayectoria
+                    handPositions.push({x: indexTip.x, y: indexTip.y});
+                    if (handPositions.length > 20) handPositions.shift();
+                    
+                    // Generar nota basada en la posición Y
+                    const now = Tone.now();
+                    if (now - lastNoteTime > 0.1) { // Limitar frecuencia de notas
+                        const note = mapToNote(indexTip.y);
+                        const velocity = map(indexTip.z, -0.5, 0.5, 0.1, 1);
+                        
+                        synth.triggerAttackRelease(note, '8n', now, velocity);
+                        lastNoteTime = now;
+                    }
+                }
+            }
+            
+            drawVisualization(results);
+        });
+
+        // Event Listeners
+        document.getElementById('startBtn').addEventListener('click', async () => {
+            await Tone.start();
+            camera.start();
+            isAudioStarted = true;
+        });
+
+        document.getElementById('calibrateBtn').addEventListener('click', () => {
+            handPositions = [];
+        });
+
+        document.getElementById('scaleType').addEventListener('change', (e) => {
+            currentScale = scales[e.target.value];
+        });
+
+        document.getElementById('reverbSlider').addEventListener('input', (e) => {
+            reverb.wet.value = e.target.value;
+        });
+
+        document.getElementById('soundType').addEventListener('change', (e) => {
+            switch(e.target.value) {
+                case 'synth':
+                    synth.set({
+                        oscillator: { type: 'sine' },
+                        envelope: { attack: 0.1, decay: 0.2, sustain: 0.8, release: 1 }
+                    });
+                    break;
+                case 'ambient':
+                    synth.set({
+                        oscillator: { type: 'triangle' },
+                        envelope: { attack: 0.5, decay: 0.5, sustain: 1, release: 3 }
+                    });
+                    break;
+                case 'drums':
+                    synth.set({
+                        oscillator: { type: 'square' },
+                        envelope: { attack: 0.01, decay: 0.1, sustain: 0.1, release: 0.1 }
+                    });
+                    break;
+            }
+        });
+
+        document.getElementById('sensitivitySlider').addEventListener('input', (e) => {
+            const sensitivity = e.target.value / 10;
+            hands.setOptions({
+                minDetectionConfidence: 0.5 + (sensitivity * 0.2),
+                minTrackingConfidence: 0.5 + (sensitivity * 0.2)
+            });
+        });
+    </script>
+</body>
+</html>
