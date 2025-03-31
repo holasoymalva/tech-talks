@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            max-width: 800px;
+            width: 100%;
+        }
+        .controls {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        canvas {
+            background: #000;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .sliders {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .slider-container {
+            display: flex;
+            flex-direction: column;
+        }
+        input[type="range"] {
+            width: 100%;
+        }
+        .palette {
+            display: flex;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .color-box {
+            width: 30px;
+            height: 30px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Generador de Arte con IA</h1>
+        
+        <div class="controls">
+            <div class="buttons">
+                <button onclick="generateNewArt()">Generar Nuevo Arte</button>
+                <button onclick="animateArt()">Animar</button>
+                <button onclick="stopAnimation()">Detener</button>
+            </div>
+            
+            <div class="sliders">
+                <div class="slider-container">
+                    <label>Complejidad</label>
+                    <input type="range" id="complexity" min="3" max="20" value="8">
+                </div>
+                <div class="slider-container">
+                    <label>Velocidad</label>
+                    <input type="range" id="speed" min="1" max="10" value="5">
+                </div>
+                <div class="slider-container">
+                    <label>Tamaño</label>
+                    <input type="range" id="size" min="10" max="50" value="30">
+                </div>
+            </div>
+            
+            <div class="palette" id="palette"></div>
+        </div>
+        
+        <canvas id="artCanvas"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('artCanvas');
+        const ctx = canvas.getContext('2d');
+        let animationId = null;
+        let shapes = [];
+        let palette = [];
+
+        // Configurar tamaño del canvas
+        function setupCanvas() {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+
+        // Generar paleta de colores
+        function generatePalette() {
+            const hue = Math.random() * 360;
+            palette = [
+                `hsl(${hue}, 70%, 50%)`,
+                `hsl(${(hue + 60) % 360}, 70%, 50%)`,
+                `hsl(${(hue + 120) % 360}, 70%, 50%)`,
+                `hsl(${(hue + 180) % 360}, 70%, 50%)`,
+                `hsl(${(hue + 240) % 360}, 70%, 50%)`
+            ];
+            
+            // Actualizar visualización de paleta
+            const paletteDiv = document.getElementById('palette');
+            paletteDiv.innerHTML = '';
+            palette.forEach(color => {
+                const colorBox = document.createElement('div');
+                colorBox.className = 'color-box';
+                colorBox.style.backgroundColor = color;
+                paletteDiv.appendChild(colorBox);
+            });
+        }
+
+        // Crear forma
+        function createShape() {
+            const complexity = parseInt(document.getElementById('complexity').value);
+            const size = parseInt(document.getElementById('size').value);
+            
+            return {
+                points: Array.from({length: complexity}, () => ({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    vx: (Math.random() - 0.5) * 2,
+                    vy: (Math.random() - 0.5) * 2
+                })),
+                color: palette[Math.floor(Math.random() * palette.length)],
+                size: size + Math.random() * 20
+            };
+        }
+
+        // Dibujar forma
+        function drawShape(shape) {
+            ctx.beginPath();
+            ctx.moveTo(shape.points[0].x, shape.points[0].y);
+            
+            for (let i = 1; i < shape.points.length; i++) {
+                ctx.lineTo(shape.points[i].x, shape.points[i].y);
+            }
+            
+            ctx.closePath();
+            ctx.fillStyle = shape.color;
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        // Actualizar posiciones
+        function updateShapes() {
+            shapes.forEach(shape => {
+                shape.points.forEach(point => {
+                    point.x += point.vx;
+                    point.y += point.vy;
+                    
+                    if (point.x < 0 || point.x > canvas.width) point.vx *= -1;
+                    if (point.y < 0 || point.y > canvas.height) point.vy *= -1;
+                });
+            });
+        }
+
+        // Dibujar frame
+        function draw() {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            shapes.forEach(shape => drawShape(shape));
+        }
+
+        // Animar
+        function animate() {
+            const speed = parseInt(document.getElementById('speed').value);
+            
+            for (let i = 0; i < speed; i++) {
+                updateShapes();
+            }
+            
+            draw();
+            animationId = requestAnimationFrame(animate);
+        }
+
+        // Generar nuevo arte
+        function generateNewArt() {
+            const complexity = parseInt(document.getElementById('complexity').value);
+            shapes = Array.from({length: complexity}, () => createShape());
+            generatePalette();
+            draw();
+        }
+
+        // Iniciar animación
+        function animateArt() {
+            if (animationId === null) {
+                animate();
+            }
+        }
+
+        // Detener animación
+        function stopAnimation() {
+            if (animationId !== null) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+        }
+
+        // Inicialización
+        setupCanvas();
+        generateNewArt();
+    </script>
+</body>
+</html>

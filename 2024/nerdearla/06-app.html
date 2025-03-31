@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Dance Music Generator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #0f0f0f;
+            color: white;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            max-width: 1200px;
+            width: 100%;
+        }
+
+        .title {
+            text-align: center;
+            color: #00ff9d;
+            margin-bottom: 30px;
+        }
+
+        .interface {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .video-container, .canvas-container {
+            position: relative;
+            background: #1a1a1a;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        video, canvas {
+            width: 100%;
+            height: auto;
+            transform: scaleX(-1);
+        }
+
+        .controls {
+            background: #1a1a1a;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 20px 0;
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+
+        .control-section {
+            background: #252525;
+            padding: 15px;
+            border-radius: 8px;
+        }
+
+        .section-title {
+            color: #00ff9d;
+            margin-bottom: 15px;
+        }
+
+        button {
+            background: #00ff9d;
+            color: black;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            margin: 5px;
+        }
+
+        button:hover {
+            background: #00cc7d;
+            transform: translateY(-2px);
+        }
+
+        select {
+            width: 100%;
+            padding: 8px;
+            background: #333;
+            color: white;
+            border: 1px solid #444;
+            border-radius: 4px;
+            margin: 5px 0;
+        }
+
+        .status-indicator {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="title">Dance Music Generator</h1>
+        
+        <div class="interface">
+            <div class="video-container">
+                <video id="video"></video>
+                <div class="status-indicator" id="poseStatus">Detectando posición...</div>
+            </div>
+            
+            <div class="canvas-container">
+                <canvas id="output-canvas"></canvas>
+            </div>
+            
+            <div class="controls">
+                <div class="control-section">
+                    <h3 class="section-title">Control Principal</h3>
+                    <button id="startButton">Iniciar</button>
+                    <button id="resetButton">Reiniciar</button>
+                </div>
+                
+                <div class="control-section">
+                    <h3 class="section-title">Configuración de Sonido</h3>
+                    <select id="instrumentSelect">
+                        <option value="synth">Sintetizador</option>
+                        <option value="marimba">Marimba</option>
+                        <option value="bass">Bajo</option>
+                        <option value="drums">Percusión</option>
+                    </select>
+                    
+                    <select id="scaleSelect">
+                        <option value="pentatonic">Escala Pentatónica</option>
+                        <option value="major">Escala Mayor</option>
+                        <option value="minor">Escala Menor</option>
+                        <option value="blues">Blues</option>
+                    </select>
+                </div>
+                
+                <div class="control-section">
+                    <h3 class="section-title">Zonas Activas</h3>
+                    <button id="toggleGrid">Mostrar/Ocultar Zonas</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuración de MediaPipe Pose
+        const pose = new Pose({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+        }});
+
+        pose.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        // Configuración de Tone.js
+        const synth = new Tone.PolySynth().toDestination();
+        const reverb = new Tone.Reverb({
+            decay: 2,
+            wet: 0.3
+        }).toDestination();
+
+        synth.connect(reverb);
+
+        // Escalas musicales
+        const scales = {
+            pentatonic: ['C4', 'D4', 'E4', 'G4', 'A4'],
+            major: ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4'],
+            minor: ['C4', 'D4', 'Eb4', 'F4', 'G4', 'Ab4', 'Bb4'],
+            blues: ['C4', 'Eb4', 'F4', 'F#4', 'G4', 'Bb4']
+        };
+
+        let currentScale = scales.pentatonic;
+        let isActive = false;
+        let lastTriggerTime = 0;
+        let showGrid = false;
+
+        // Elementos del DOM
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('output-canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Configurar cámara
+        const camera = new Camera(video, {
+            onFrame: async () => {
+                await pose.send({image: video});
+            },
+            width: 640,
+            height: 480
+        });
+
+        // Configurar canvas
+        canvas.width = 640;
+        canvas.height = 480;
+
+        // Funciones de utilidad
+        function mapRange(value, low1, high1, low2, high2) {
+            return low2 + (high2 - low2) * (value - low1) / (high1 - low1);
+        }
+
+        function getNoteFromPosition(y) {
+            const index = Math.floor(mapRange(y, 0, 1, 0, currentScale.length));
+            return currentScale[Math.min(index, currentScale.length - 1)];
+        }
+
+        function getVelocityFromMovement(movement) {
+            return mapRange(movement, 0, 0.1, 0.1, 1);
+        }
+
+        // Procesar resultados de pose
+        pose.onResults((results) => {
+            // Actualizar estado
+            document.getElementById('poseStatus').textContent = 
+                results.poseLandmarks ? 'Pose detectada' : 'Buscando pose...';
+
+            // Limpiar canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (results.poseLandmarks && isActive) {
+                // Dibujar pose
+                drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS,
+                    {color: '#00ff9d', lineWidth: 2});
+                drawLandmarks(ctx, results.poseLandmarks,
+                    {color: '#ffffff', lineWidth: 1});
+
+                // Detectar movimiento significativo
+                const rightWrist = results.poseLandmarks[POSE_LANDMARKS.RIGHT_WRIST];
+                const leftWrist = results.poseLandmarks[POSE_LANDMARKS.LEFT_WRIST];
+                const rightAnkle = results.poseLandmarks[POSE_LANDMARKS.RIGHT_ANKLE];
+                const leftAnkle = results.poseLandmarks[POSE_LANDMARKS.LEFT_ANKLE];
+
+                const now = Tone.now();
+                
+                // Generar sonidos basados en movimiento
+                if (now - lastTriggerTime > 0.1) {
+                    // Manos
+                    if (Math.abs(rightWrist.y - leftWrist.y) > 0.1) {
+                        const note = getNoteFromPosition((rightWrist.y + leftWrist.y) / 2);
+                        const velocity = getVelocityFromMovement(Math.abs(rightWrist.y - leftWrist.y));
+                        synth.triggerAttackRelease(note, '8n', now, velocity);
+                    }
+
+                    // Pies
+                    if (Math.abs(rightAnkle.y - leftAnkle.y) > 0.1) {
+                        const note = getNoteFromPosition((rightAnkle.y + leftAnkle.y) / 2);
+                        const velocity = getVelocityFromMovement(Math.abs(rightAnkle.y - leftAnkle.y));
+                        synth.triggerAttackRelease(note, '8n', now, velocity * 0.7);
+                    }
+
+                    lastTriggerTime = now;
+                }
+
+                // Dibujar grid si está activado
+                if (showGrid) {
+                    drawGrid();
+                }
+            }
+        });
+
+        // Función para dibujar grid
+        function drawGrid() {
+            ctx.strokeStyle = 'rgba(0, 255, 157, 0.2)';
+            ctx.lineWidth = 1;
+
+            // Divisiones verticales
+            for (let i = 0; i <= currentScale.length; i++) {
+                const y = (i / currentScale.length) * canvas.height;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+                
+                // Etiquetas de notas
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                ctx.font = '12px Arial';
+                ctx.fillText(currentScale[i] || '', 10, y - 5);
+            }
+        }
+
+        // Event Listeners
+        document.getElementById('startButton').addEventListener('click', async () => {
+            await Tone.start();
+            camera.start();
+            isActive = true;
+        });
+
+        document.getElementById('resetButton').addEventListener('click', () => {
+            isActive = false;
+            lastTriggerTime = 0;
+        });
+
+        document.getElementById('scaleSelect').addEventListener('change', (e) => {
+            currentScale = scales[e.target.value];
+        });
+
+        document.getElementById('instrumentSelect').addEventListener('change', (e) => {
+            switch(e.target.value) {
+                case 'synth':
+                    synth.set({
+                        oscillator: { type: 'sine' },
+                        envelope: { attack: 0.1, decay: 0.2, sustain: 0.8, release: 1 }
+                    });
+                    break;
+                case 'marimba':
+                    synth.set({
+                        oscillator: { type: 'triangle' },
+                        envelope: { attack: 0.01, decay: 0.3, sustain: 0.1, release: 0.3 }
+                    });
+                    break;
+                case 'bass':
+                    synth.set({
+                        oscillator: { type: 'sawtooth' },
+                        envelope: { attack: 0.05, decay: 0.2, sustain: 0.5, release: 0.8 }
+                    });
+                    break;
+                case 'drums':
+                    synth.set({
+                        oscillator: { type: 'square' },
+                        envelope: { attack: 0.01, decay: 0.1, sustain: 0.1, release: 0.1 }
+                    });
+                    break;
+            }
+        });
+
+        document.getElementById('toggleGrid').addEventListener('click', () => {
+            showGrid = !showGrid;
+        });
+    </script>
+</body>
+</html>
